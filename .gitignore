@@ -4,6 +4,10 @@
 .env
 firebase-credentials.json
 
+# Ignore virtual environment
+.venv/
+venv/
+
 # Ignore Python cache files (best practice)
 __pycache__/
 *.pyc
