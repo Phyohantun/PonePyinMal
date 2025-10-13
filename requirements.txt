@@ -1,0 +1,7 @@
+# requirements.txt
+
+python-telegram-bot
+replicate
+firebase-admin
+python-dotenv
+Pillow

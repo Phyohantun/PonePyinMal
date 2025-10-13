@@ -1,0 +1,9 @@
+# .gitignore
+
+# Ignore secret files
+.env
+firebase-credentials.json
+
+# Ignore Python cache files (best practice)
+__pycache__/
+*.pyc
