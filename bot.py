@@ -309,12 +309,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     msg = f"""👋 မင်္ဂလာပါ {user_name}
 
-ဝါးနေတဲ့ ဓာတ်ပုံတွေကို AI နဲ့ ကြည်လင်အောင် ပြုပြင်ပေးနေပါတယ်။\n
-ကိုယ်ပြင်ချင်တဲ့ပုံကိုဒီ bot ကို အလွယ်တကူ ပို့လိုက်တာနဲ့ တန်းပီး ပြုပြင်ပေးမှာပါ။
+ဝါးနေတဲ့ ဓာတ်ပုံတွေကို AI နဲ့ ကြည်လင်အောင် ပြုပြင်ပေးနေပါတယ်။
 
-အောက်ကLinkကိုနှိပ် Channel ကို Subscribe လုပ်ထားရင်တော့ Bot Knowledgeတွေရှယ်ပေးမယ့်အပြင်ကျွန်တော်လုပ်တဲ့botတွေကို အရင်သုံးခွင့်ရပါမယ်။\n
-https://t.me/botknowledgesharing
+✨ တစ်နေ့လျှင် အခမဲ့ {TRIAL_LIMIT} ပုံ စမ်းသုံးနိုင်ပါတယ် (နေ့စဉ် Reset ဖြစ်ပါမယ်)
+📸 ပုံပို့လိုက်ရုံပါပဲ
 
+🔗 Channel ကို Subscribe လုပ်ထားရင် Bot Knowledge တွေရှယ်ပေးမယ့်အပြင် ကျွန်တော်လုပ်တဲ့ bot တွေကို အရင်သုံးခွင့်ရပါမယ်။
+👉 https://t.me/botknowledgesharing
+
+💎 ကန့်သတ်ချက်မရှိ သုံးချင်ရင် /subscribe ကိုနှိပ်ကြည့်ပါ
 """
     
     await update.message.reply_text(msg)
