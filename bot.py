@@ -51,7 +51,7 @@ replicate_client = replicate.Client(api_token=REPLICATE_TOKEN)
 
 # --- 4. CONSTANTS ---
 MAX_PIXELS = 2560 * 1440
-TRIAL_LIMIT = 3
+TRIAL_LIMIT = 5  # Daily trial limit - resets every day
 GIF_PATH = os.path.join(os.path.dirname(__file__), "AnimatedSticker.tgs")
 
 # --- 5. MULTI-PHOTO TRACKING ---
@@ -232,6 +232,7 @@ async def delete_message_after_delay(bot, chat_id: int, message_id: int, delay_s
 
 SUBSCRIPTION_CREDITS = 150
 ADMIN_USERNAME = "@ismecy"
+ADMIN_ID = 6636843617  # Replace with your actual Telegram user ID
 
 # --- 6. DATABASE HELPER FUNCTIONS ---
 
@@ -257,6 +258,7 @@ def get_or_create_user(user_id: int) -> dict:
         new_user_data = {
             "status": "trial", "trial_credits_used": 0,
             "paid_credits_remaining": 0, "renewal_date": None,
+            "last_trial_reset_date": date.today().isoformat(),
         }
         user_ref.set(new_user_data)
         with users_cache_lock:
@@ -272,7 +274,34 @@ def get_or_create_user(user_id: int) -> dict:
         _start_user_watch(user_id)
     return data
 
-# --- 7. TELEGRAM BOT COMMAND HANDLERS ---
+def check_and_reset_daily_trial(user_id: int, user_data: dict) -> dict:
+    """Check if trial credits need to be reset for a new day. Returns updated user data."""
+    try:
+        # Only reset for trial users
+        if user_data.get("status") != "trial":
+            return user_data
+        
+        last_reset = user_data.get("last_trial_reset_date")
+        today = date.today().isoformat()
+        
+        # If last reset is not today, reset the credits
+        if last_reset != today:
+            user_ref = db.collection("users").document(str(user_id))
+            user_ref.update({
+                "trial_credits_used": 0,
+                "last_trial_reset_date": today
+            })
+            # Update local data
+            user_data["trial_credits_used"] = 0
+            user_data["last_trial_reset_date"] = today
+            logging.info(f"Reset daily trial credits for user {user_id}")
+        
+        return user_data
+    except Exception as e:
+        logging.error(f"Error resetting daily trial for user {user_id}: {e}")
+        return user_data
+
+# --- 7. BOT COMMAND HANDLERS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sends the welcome message in Burmese."""
@@ -281,11 +310,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = f"""👋 မင်္ဂလာပါ {user_name}
 
 ဝါးနေတဲ့ ဓာတ်ပုံတွေကို AI နဲ့ ကြည်လင်အောင် ပြုပြင်ပေးနေပါတယ်။\n
-အခြား App တွေသုံးရင် ကြေငြာကြည့်ရတာ အချိန်ကုန်ခေါင်းကိုက်ပါတယ်။ ကိုယ်ပြင်ချင်တဲ့ပုံကိုဒီ bot ကို အလွယ်တကူ ပို့လိုက်တာနဲ့ တန်းပီး ပြုပြင်ပေးမှာပါ။ ဘာလို့အလုပ်ရှုတ်ခံတော့မှာလည်းဟုတ်တယ်မလား?
+ကိုယ်ပြင်ချင်တဲ့ပုံကိုဒီ bot ကို အလွယ်တကူ ပို့လိုက်တာနဲ့ တန်းပီး ပြုပြင်ပေးမှာပါ။
 
-✨ အခမဲ့ {TRIAL_LIMIT} ပုံ စမ်းသုံးနိုင်ပါတယ်
-
-၃ခါ စမ်းဖို့ အခုပဲပုံပို့ပေးလိုက်ပါ။\n
+အောက်ကLinkကိုနှိပ် Channel ကို Subscribe လုပ်ထားရင်တော့ Bot Knowledgeတွေရှယ်ပေးမယ့်အပြင်ကျွန်တော်လုပ်တဲ့botတွေကို အရင်သုံးခွင့်ရပါမယ်။\n
+https://t.me/botknowledgesharing
 
 """
     
@@ -309,8 +337,7 @@ async def subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ထိုင်းဘတ် နဲ့လွှဲချင်ရင်တော့ အကောင့်မှာ လာပြောပေးပါဗျ။
 
 🙏 အားလုံးကိုကျေးဇူးတင်ပါတယ်\n
-ဒီ Channel မှာလည်း အပါတ်တိုင်း ပုံထုတ်ဖို့ Credits ပေးဖို့ရှိပါတယ်။ Subscribe လုပ်ထားဖို့ မမေ့ပါနဲ့ဗျ။\n
-https://t.me/ponepyinmalCreditsGiveaway\n
+
 """
     # Inline keyboard with copy-style helper
     keyboard = [
@@ -389,6 +416,93 @@ async def credits(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logging.error(f"Error in /credits: {e}")
         await update.message.reply_text(f"❌ အချက်အလက်ပြရန် Errorဖြစ်နေပါတယ်။ Admin ကိုဆက်သွယ်ပါ {ADMIN_USERNAME}")
+
+def is_admin(user_id: int) -> bool:
+    """Check if the user is an admin."""
+    return user_id == ADMIN_ID
+
+async def my_user_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin-only command to view all users and their statistics."""
+    user_id = update.message.from_user.id
+    
+    # Check if user is admin
+    if not is_admin(user_id):
+        await update.message.reply_text("🚫 သင့်တွင် ဒီ command ကိုသုံးခွင့်မရှိပါ။")
+        return
+    
+    try:
+        # Fetch all users from Firestore
+        users_ref = db.collection("users")
+        all_users = users_ref.stream()
+        
+        # Collect user statistics
+        total_users = 0
+        trial_users = 0
+        paid_users = 0
+        expired_users = 0
+        user_details = []
+        
+        for user_doc in all_users:
+            total_users += 1
+            user_data = user_doc.to_dict()
+            user_id_str = user_doc.id
+            
+            status = compute_effective_status(user_data)
+            if status == "trial":
+                trial_users += 1
+            elif status == "paid":
+                paid_users += 1
+            elif status == "expired":
+                expired_users += 1
+            
+            # Collect basic info for each user
+            trial_used = user_data.get("trial_credits_used", 0)
+            paid_remaining = user_data.get("paid_credits_remaining", 0)
+            renewal = user_data.get("renewal_date", "N/A")
+            
+            user_details.append({
+                "id": user_id_str,
+                "status": status,
+                "trial_used": trial_used,
+                "paid_remaining": paid_remaining,
+                "renewal": renewal
+            })
+        
+        # Build response message
+        response = (
+            f"📊 **Bot User Statistics**\n\n"
+            f"👥 **Total Users:** {total_users}\n"
+            f"🆓 **Trial Users:** {trial_users}\n"
+            f"💎 **Paid Users:** {paid_users}\n"
+            f"⛔ **Expired Users:** {expired_users}\n\n"
+        )
+        
+        # Add detailed list (limit to first 20 to avoid message length issues)
+        if total_users > 0:
+            response += "**User Details (First 20):**\n\n"
+            for i, user in enumerate(user_details[:20]):
+                status_emoji = {"trial": "🆓", "paid": "💎", "expired": "⛔"}.get(user["status"], "❓")
+                response += (
+                    f"{i+1}. {status_emoji} ID: `{user['id']}`\n"
+                    f"   Status: {user['status'].upper()}\n"
+                )
+                if user["status"] == "trial":
+                    response += f"   Trial Used: {user['trial_used']}/{TRIAL_LIMIT}\n"
+                elif user["status"] in ["paid", "expired"]:
+                    response += f"   Credits: {user['paid_remaining']}\n"
+                    response += f"   Renewal: {user['renewal']}\n"
+                response += "\n"
+            
+            if total_users > 20:
+                response += f"\n_...and {total_users - 20} more users_"
+        else:
+            response += "No users found in database."
+        
+        await update.message.reply_text(response, parse_mode='Markdown')
+    
+    except Exception as e:
+        logging.error(f"Error in /myuserlist: {e}")
+        await update.message.reply_text(f"❌ Error fetching user list: {str(e)}")
 
 async def non_photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Politely tell users to send only images when they send anything else."""
@@ -484,6 +598,7 @@ async def process_photo_queue(user_id: int):
                     # Single-image flow: before showing loader, ensure trial users still have credits
                     try:
                         user_data = get_or_create_user(user_id)
+                        user_data = check_and_reset_daily_trial(user_id, user_data)  # Check daily reset
                         effective_status = compute_effective_status(user_data)
 
                         # Expired users: do NOT show loader, prompt to subscribe
@@ -510,7 +625,7 @@ async def process_photo_queue(user_id: int):
                             # Trial exhausted: do NOT show sticker/text, just send subscribe prompt and mark processed
                             await context.bot.send_message(
                                 chat_id=user_id,
-                                text=f"🚫 အခမဲ့ {TRIAL_LIMIT}ခါအသုံးပြုပြီးပါပြီ\n/subscribe ကိုနှိပ်ပြီး Premium Version ကို စုံစမ်းနိုင်ပါတယ်"
+                                text=f"🚫 ဒီနေ့အတွက် အခမဲ့ {TRIAL_LIMIT}ပုံ အသုံးပြုပြီးပါပြီ\n⏰ မနက်ဖြန် ထပ်သုံးနိုင်ပါမယ်\n\n💎 ကန့်သတ်ချက်မရှိ သုံးချင်ရင် /subscribe ကိုနှိပ်ပြီး Premium Version ကို စုံစမ်းနိုင်ပါတယ်"
                             )
                             if user_id in user_photo_counters:
                                 user_photo_counters[user_id]['processed'] += 1
@@ -624,6 +739,7 @@ async def process_photo_queue(user_id: int):
 async def process_single_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, current_photo_num: int):
     """Process a single photo completely"""
     user_data = get_or_create_user(user_id)
+    user_data = check_and_reset_daily_trial(user_id, user_data)  # Check and reset daily trial
     user_ref = db.collection("users").document(str(user_id))
     
     can_proceed, is_trial = False, False
@@ -632,7 +748,7 @@ async def process_single_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         if user_data.get("trial_credits_used", 0) < TRIAL_LIMIT:
             can_proceed, is_trial = True, True
         else:
-            await update.message.reply_text(f"🚫 အခမဲ့ {TRIAL_LIMIT} ပုံ သုံးပြီးပါပြီ\n ကြိုက်နှစ်သက်ရင်/subscribe ကိုနှိပ်ပီး Premium Version ကို စုံစမ်းနိုင်ပါတယ်")
+            await update.message.reply_text(f"🚫 ဒီနေ့အတွက် အခမဲ့ {TRIAL_LIMIT}ပုံ အသုံးပြုပြီးပါပြီ\n⏰ မနက်ဖြန် ထပ်သုံးနိုင်ပါမယ်\n\n💎 ကန့်သတ်ချက်မရှိ သုံးချင်ရင် /subscribe ကိုနှိပ်ပီး Premium Version ကို စုံစမ်းနိုင်ပါတယ်")
             user_photo_counters[user_id]['processed'] += 1
             return
     elif status_effective == "paid":
@@ -657,6 +773,19 @@ async def process_single_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         
         photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
+        
+        # Check file size limit (4MB = 4 * 1024 * 1024 bytes)
+        MAX_FILE_SIZE = 4 * 1024 * 1024  # 4MB in bytes
+        if file.file_size and file.file_size > MAX_FILE_SIZE:
+            file_size_mb = file.file_size / (1024 * 1024)
+            await update.message.reply_text(
+                f"⚠️ ပုံအရွယ်အစားကြီးလွန်းပါတယ် ({file_size_mb:.2f}MB)\n"
+                f"📌 ပုံအရွယ်အစား 4MB အောက်သာ ပို့နိုင်ပါတယ်\n"
+                f"ကျေးဇူးပြု၍ ပုံအရွယ်အစားလျော့ပြီး ပြန်ပို့ပါ"
+            )
+            user_photo_counters[user_id]['processed'] += 1
+            return
+        
         file_bytes = io.BytesIO()
         await file.download_to_memory(file_bytes)
         file_bytes.seek(0)
@@ -675,7 +804,7 @@ async def process_single_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         output = await asyncio.to_thread(
             replicate_client.run,
             model_version,
-            input={"image": file_bytes, "scale": 2}
+            input={"image": file_bytes, "scale": 4}
         )
         
         logging.info(f"Replicate output: {output}")
@@ -756,6 +885,7 @@ def main():
     app.add_handler(CallbackQueryHandler(copy_kbz_callback, pattern="^copy_kbz$"))
     app.add_handler(CommandHandler("myid", my_id))
     app.add_handler(CommandHandler("credits", credits))
+    app.add_handler(CommandHandler("myuserlist", my_user_list))
     app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     # Catch-all for non-photo, non-command messages to enforce image-only input
     app.add_handler(MessageHandler(~filters.PHOTO & ~filters.COMMAND, non_photo_handler))
