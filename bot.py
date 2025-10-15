@@ -425,9 +425,12 @@ async def my_user_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin-only command to view all users and their statistics."""
     user_id = update.message.from_user.id
     
+    # Debug logging
+    logging.info(f"User {user_id} attempted to access /myuserlist.")
+    
     # Check if user is admin
     if not is_admin(user_id):
-        await update.message.reply_text("🚫 သင့်တွင် ဒီ command ကိုသုံးခွင့်မရှိပါ။")
+        await update.message.reply_text(f"🚫 သင့်တွင် ဒီ command ကိုသုံးခွင့်မရှိပါ။", parse_mode='Markdown')
         return
     
     try:
