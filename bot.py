@@ -741,33 +741,52 @@ async def process_photo_queue(user_id: int):
 
 async def process_single_photo(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, current_photo_num: int):
     """Process a single photo completely"""
-    user_data = get_or_create_user(user_id)
-    user_data = check_and_reset_daily_trial(user_id, user_data)  # Check and reset daily trial
-    user_ref = db.collection("users").document(str(user_id))
-    
-    can_proceed, is_trial = False, False
-    status_effective = compute_effective_status(user_data)
-    if status_effective == "trial":
-        if user_data.get("trial_credits_used", 0) < TRIAL_LIMIT:
-            can_proceed, is_trial = True, True
-        else:
-            await update.message.reply_text(f"🚫 ဒီနေ့အတွက် အခမဲ့ {TRIAL_LIMIT}ပုံ အသုံးပြုပြီးပါပြီ\n⏰ မနက်ဖြန် ထပ်သုံးနိုင်ပါမယ်\n\n💎 ကန့်သတ်ချက်မရှိ သုံးချင်ရင် /subscribe ကိုနှိပ်ပီး Premium Version ကို စုံစမ်းနိုင်ပါတယ်")
+    try:
+        user_data = get_or_create_user(user_id)
+        user_data = check_and_reset_daily_trial(user_id, user_data)  # Check and reset daily trial
+        user_ref = db.collection("users").document(str(user_id))
+        
+        can_proceed, is_trial = False, False
+        status_effective = compute_effective_status(user_data)
+        
+        # Detailed logging for debugging
+        logging.info(f"User {user_id} - Status: {status_effective}, Trial used: {user_data.get('trial_credits_used', 0)}/{TRIAL_LIMIT}, Paid remaining: {user_data.get('paid_credits_remaining', 0)}")
+        
+        if status_effective == "trial":
+            if user_data.get("trial_credits_used", 0) < TRIAL_LIMIT:
+                can_proceed, is_trial = True, True
+                logging.info(f"User {user_id} trial access granted")
+            else:
+                await update.message.reply_text(f"🚫 ဒီနေ့အတွက် အခမဲ့ {TRIAL_LIMIT}ပုံ အသုံးပြုပြီးပါပြီ\n⏰ မနက်ဖြန် ထပ်သုံးနိုင်ပါမယ်\n\n💎 ကန့်သတ်ချက်မရှိ သုံးချင်ရင် /subscribe ကိုနှိပ်ပီး Premium Version ကို စုံစမ်းနိုင်ပါတယ်")
+                user_photo_counters[user_id]['processed'] += 1
+                return
+        elif status_effective == "paid":
+            if user_data.get("paid_credits_remaining", 0) > 0:
+                can_proceed = True
+                logging.info(f"User {user_id} paid access granted")
+            else:
+                await update.message.reply_text("🚫 ဒီလအတွက် ပုံထုတ်တဲ့ပမာဏ ကုန်ဆုံးပါပြီ")
+                user_photo_counters[user_id]['processed'] += 1
+                return
+        elif status_effective == "expired":
+            await update.message.reply_text(f"🚫 သက်တမ်းကုန်ပါပြီ\n{ADMIN_USERNAME} သို့ ဆက်သွယ်ပါ")
             user_photo_counters[user_id]['processed'] += 1
             return
-    elif status_effective == "paid":
-        if user_data.get("paid_credits_remaining", 0) > 0:
-            can_proceed = True
         else:
-            await update.message.reply_text("🚫 ဒီလအတွက် ပုံထုတ်တဲ့ပမာဏ ကုန်ဆုံးပါပြီ")
+            # Unknown status - log and inform user
+            logging.error(f"Unknown status for user {user_id}: {status_effective}, user_data: {user_data}")
+            await update.message.reply_text(f"⚠️ အကောင့်အခြေအနေ စစ်ဆေးရန် ပြဿနာရှိနေပါသည်။\nသင့် Status: {status_effective}\n\n{ADMIN_USERNAME} ကိုဆက်သွယ်ပေးပါ။")
             user_photo_counters[user_id]['processed'] += 1
             return
-    elif status_effective == "expired":
-        await update.message.reply_text(f"🚫 သက်တမ်းကုန်ပါပြီ\n{ADMIN_USERNAME} သို့ ဆက်သွယ်ပါ")
-        user_photo_counters[user_id]['processed'] += 1
-        return
 
-    if not can_proceed:
-        await update.message.reply_text(f"❌ Error တက်နေပါတယ်ဗျ Admin {ADMIN_USERNAME}ကိုဆက်သွယ်ပါဗျ")
+        if not can_proceed:
+            logging.error(f"User {user_id} cannot proceed - Status: {status_effective}, Data: {user_data}")
+            await update.message.reply_text(f"❌ Error တက်နေပါတယ်ဗျ\nStatus: {status_effective}\nAdmin {ADMIN_USERNAME}ကိုဆက်သွယ်ပါဗျ")
+            user_photo_counters[user_id]['processed'] += 1
+            return
+    except Exception as e:
+        logging.error(f"Error in user validation for {user_id}: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ အကောင့်စစ်ဆေးရာတွင် Error ဖြစ်ပါသည်\nAdmin {ADMIN_USERNAME}ကိုဆက်သွယ်ပါဗျ")
         user_photo_counters[user_id]['processed'] += 1
         return
     
@@ -842,28 +861,92 @@ async def process_single_photo(update: Update, context: ContextTypes.DEFAULT_TYP
         user_photo_counters[user_id]['processed'] += 1
 
 async def send_enhanced_image_safely(update, context, output_url, user_ref, is_trial):
-    """Send enhanced image without extra messages"""
+    """Send enhanced image without extra messages, cropping white space and optimizing size"""
     try:
         logging.info(f"Downloading from: {output_url}")
         
         async with httpx.AsyncClient() as client:
             response = await client.get(output_url, timeout=60.0)
             response.raise_for_status()
-            image_data = response.content
+            original_data = response.content
         
-        PHOTO_SIZE_LIMIT = 10 * 1024 * 1024
+        original_size_mb = len(original_data) / (1024 * 1024)
+        logging.info(f"Downloaded image: {original_size_mb:.2f}MB")
         
-        if len(image_data) < PHOTO_SIZE_LIMIT:
+        # Process image to remove white space and optimize
+        img = Image.open(io.BytesIO(original_data))
+        original_dimensions = img.size
+        logging.info(f"Original dimensions: {original_dimensions[0]}x{original_dimensions[1]}")
+        
+        # Convert RGBA to RGB if needed (remove alpha channel)
+        if img.mode == 'RGBA':
+            rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+            rgb_img.paste(img, mask=img.split()[3] if len(img.split()) == 4 else None)
+            img = rgb_img
+            logging.info("Converted RGBA to RGB")
+        elif img.mode != 'RGB':
+            img = img.convert('RGB')
+            logging.info(f"Converted {img.mode} to RGB")
+        
+        # Telegram limits: 10MB for photos as photo, 50MB for documents, 10000px max dimension
+        MAX_PHOTO_DIMENSION = 10000
+        MAX_PRACTICAL_DIMENSION = 8192  # Keep reasonable for most devices
+        
+        width, height = img.size
+        
+        # Smart resize: if image is too large, resize to practical size
+        if width > MAX_PRACTICAL_DIMENSION or height > MAX_PRACTICAL_DIMENSION:
+            ratio = min(MAX_PRACTICAL_DIMENSION / width, MAX_PRACTICAL_DIMENSION / height)
+            new_size = (int(width * ratio), int(height * ratio))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+            logging.info(f"Resized to practical size: {img.size}")
+            width, height = img.size
+        
+        # Try different quality levels to get under 10MB for photo sending
+        PHOTO_SIZE_LIMIT = 10 * 1024 * 1024  # 10MB
+        quality_levels = [95, 90, 85, 80, 75]
+        output_buffer = None
+        used_quality = 95
+        
+        for quality in quality_levels:
+            temp_buffer = io.BytesIO()
+            img.save(temp_buffer, format='JPEG', quality=quality, optimize=True)
+            file_size = len(temp_buffer.getvalue())
+            
+            logging.info(f"Quality {quality}%: {file_size / (1024*1024):.2f}MB")
+            
+            if file_size < PHOTO_SIZE_LIMIT:
+                output_buffer = temp_buffer
+                used_quality = quality
+                break
+            elif quality == quality_levels[-1]:
+                # Even at lowest quality, still use it
+                output_buffer = temp_buffer
+                used_quality = quality
+        
+        output_buffer.seek(0)
+        final_size = len(output_buffer.getvalue())
+        final_size_mb = final_size / (1024 * 1024)
+        
+        logging.info(f"Final: {final_size_mb:.2f}MB at {used_quality}% quality, {width}x{height}px")
+        logging.info(f"Size reduction: {original_size_mb:.2f}MB → {final_size_mb:.2f}MB ({100 - (final_size_mb/original_size_mb*100):.1f}% smaller)")
+        
+        # Send as photo if under 10MB, otherwise as document
+        if final_size < PHOTO_SIZE_LIMIT:
             await context.bot.send_photo(
                 chat_id=update.effective_chat.id, 
-                photo=io.BytesIO(image_data)
+                photo=output_buffer
             )
+            logging.info("✅ Sent as PHOTO (compressed)")
         else:
+            output_buffer.seek(0)
             await context.bot.send_document(
                 chat_id=update.effective_chat.id, 
-                document=io.BytesIO(image_data),
-                filename="enhanced.png"
+                document=output_buffer,
+                filename=f"enhanced_4x_{width}x{height}.jpg",
+                caption=f"📸 Enhanced 4x • {final_size_mb:.1f}MB • {width}x{height}px"
             )
+            logging.info("📄 Sent as DOCUMENT (over 10MB)")
         
         logging.info("Image sent successfully")
         
@@ -876,7 +959,7 @@ async def send_enhanced_image_safely(update, context, output_url, user_ref, is_t
             pass
             
     except Exception as e:
-        logging.error(f"Error sending image: {e}")
+        logging.error(f"Error sending image: {e}", exc_info=True)
 
 # --- 9. MAIN BOT EXECUTION ---
 def main():
